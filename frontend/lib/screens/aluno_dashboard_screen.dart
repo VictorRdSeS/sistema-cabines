@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:async';
+import 'package:intl/intl.dart';
 
 class AlunoDashboardScreen extends StatefulWidget {
   const AlunoDashboardScreen({super.key});
@@ -18,11 +19,11 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
   String? vencimento;
   bool exibirConcluidas = false;
   String? token;
+  bool modoEscuro = true;
 
   final tituloController = TextEditingController();
   int? metaEditandoId;
 
-  // Pomodoro
   int tempoRestante = 25 * 60;
   Timer? timer;
   bool emExecucao = false;
@@ -75,8 +76,7 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
       if (venc != null) {
         final data = DateTime.tryParse(venc);
         if (data != null) {
-          vencimento =
-              '${data.day.toString().padLeft(2, '0')}/${data.month.toString().padLeft(2, '0')}/${data.year}';
+          vencimento = DateFormat('dd/MM/yyyy').format(data);
         }
       }
 
@@ -108,111 +108,6 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
     return jsonDecode(decoded);
   }
 
-  Future<void> concluirMeta(int id) async {
-    try {
-      await http.patch(
-        Uri.parse('http://localhost:3001/metas/$id/concluir'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      );
-      await carregarMetas();
-    } catch (_) {
-      setState(() => erro = 'Erro ao concluir meta.');
-    }
-  }
-
-  Future<void> excluirMeta(int id) async {
-    try {
-      await http.delete(
-        Uri.parse('http://localhost:3001/metas/$id'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-      await carregarMetas();
-    } catch (_) {
-      setState(() => erro = 'Erro ao excluir meta.');
-    }
-  }
-
-  Future<void> salvarMeta() async {
-    final titulo = tituloController.text.trim();
-    if (titulo.isEmpty) return;
-
-    final url =
-        metaEditandoId != null
-            ? 'http://localhost:3001/metas/$metaEditandoId'
-            : 'http://localhost:3001/metas';
-    final method = metaEditandoId != null ? 'PATCH' : 'POST';
-
-    try {
-      final response =
-          await (method == 'POST'
-              ? http.post(
-                Uri.parse(url),
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer $token',
-                },
-                body: jsonEncode({
-                  'titulo': titulo,
-                  'data': DateTime.now().toIso8601String().split('T')[0],
-                }),
-              )
-              : http.patch(
-                Uri.parse(url),
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer $token',
-                },
-                body: jsonEncode({'titulo': titulo}),
-              ));
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        tituloController.clear();
-        metaEditandoId = null;
-        Navigator.of(context).pop();
-        carregarMetas();
-      } else {
-        setState(() => erro = 'Erro ao salvar meta.');
-      }
-    } catch (e) {
-      setState(() => erro = 'Erro de conexão.');
-    }
-  }
-
-  void abrirDialogMeta({Map? meta}) {
-    if (meta != null) {
-      metaEditandoId = meta['id'];
-      tituloController.text = meta['titulo'];
-    } else {
-      metaEditandoId = null;
-      tituloController.clear();
-    }
-
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Text(metaEditandoId != null ? 'Editar Meta' : 'Nova Meta'),
-            content: TextField(
-              controller: tituloController,
-              decoration: const InputDecoration(labelText: 'Título da Meta'),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancelar'),
-              ),
-              ElevatedButton(
-                onPressed: salvarMeta,
-                child: const Text('Salvar'),
-              ),
-            ],
-          ),
-    );
-  }
-
   void logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
@@ -229,222 +124,223 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
   Widget build(BuildContext context) {
     final metasFiltradas =
         metas.where((m) => m['concluida'] == exibirConcluidas).toList();
+    final isDark = modoEscuro;
 
-    return Scaffold(
-      backgroundColor: Colors.grey[100],
-      appBar: AppBar(
-        title: const Text('Painel do Aluno'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: logout,
-            tooltip: 'Sair',
-          ),
-        ],
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        brightness: isDark ? Brightness.dark : Brightness.light,
+        scaffoldBackgroundColor: isDark ? Colors.black : Colors.grey[100],
+        appBarTheme: AppBarTheme(
+          backgroundColor: isDark ? Colors.grey[900] : Colors.blue,
+        ),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child:
+      home: Scaffold(
+        appBar: AppBar(
+          title: const Text('Painel do Aluno'),
+          actions: [
+            IconButton(
+              icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+              onPressed: () => setState(() => modoEscuro = !modoEscuro),
+            ),
+            IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: logout,
+              tooltip: 'Sair',
+            ),
+          ],
+        ),
+        body:
             carregando
                 ? const Center(child: CircularProgressIndicator())
-                : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (vencimento != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Text(
-                          '🗓️ Vencimento: $vencimento',
-                          style: const TextStyle(fontSize: 16),
-                        ),
-                      ),
-
-                    // Pomodoro
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      margin: const EdgeInsets.only(bottom: 24),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.grey.shade300,
-                            blurRadius: 8,
-                            offset: const Offset(0, 3),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        children: [
-                          const Text(
-                            'Pomodoro de Estudo',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
+                : Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (vencimento != null)
                           Text(
-                            formatarTempo(tempoRestante),
-                            style: const TextStyle(
-                              fontSize: 36,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            '🗓️ Seu vencimento: $vencimento',
+                            style: const TextStyle(fontSize: 16),
                           ),
-                          const SizedBox(height: 10),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              ElevatedButton(
-                                onPressed: emExecucao ? null : iniciarPomodoro,
-                                child: const Text('Iniciar'),
-                              ),
-                              const SizedBox(width: 8),
-                              ElevatedButton(
-                                onPressed: emExecucao ? pararPomodoro : null,
-                                child: const Text('Parar'),
-                              ),
-                              const SizedBox(width: 8),
-                              OutlinedButton(
-                                onPressed: resetarPomodoro,
-                                child: const Text('Resetar'),
+                        const SizedBox(height: 16),
+                        Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: isDark ? Colors.grey[900] : Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.grey.shade300,
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
                               ),
                             ],
                           ),
-                        ],
-                      ),
-                    ),
-
-                    // Metas
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Minhas Metas de Hoje',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        ElevatedButton.icon(
-                          onPressed: () => abrirDialogMeta(),
-                          icon: const Icon(Icons.add),
-                          label: const Text('Nova Meta'),
-                        ),
-                      ],
-                    ),
-
-                    Row(
-                      children: [
-                        ChoiceChip(
-                          label: const Text('Pendentes'),
-                          selected: !exibirConcluidas,
-                          onSelected:
-                              (_) => setState(() => exibirConcluidas = false),
-                        ),
-                        const SizedBox(width: 10),
-                        ChoiceChip(
-                          label: const Text('Concluídas'),
-                          selected: exibirConcluidas,
-                          onSelected:
-                              (_) => setState(() => exibirConcluidas = true),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child:
-                          metasFiltradas.isEmpty
-                              ? const Center(
-                                child: Text('Nenhuma meta encontrada.'),
-                              )
-                              : Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.grey.shade300,
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
-                                ),
-                                child: SingleChildScrollView(
-                                  child: DataTable(
-                                    columns: const [
-                                      DataColumn(label: Text('Título')),
-                                      DataColumn(label: Text('Status')),
-                                      DataColumn(label: Text('Ações')),
-                                    ],
-                                    rows:
-                                        metasFiltradas.map<DataRow>((meta) {
-                                          return DataRow(
-                                            cells: [
-                                              DataCell(
-                                                Text(meta['titulo'] ?? ''),
-                                              ),
-                                              DataCell(
-                                                Text(
-                                                  meta['concluida']
-                                                      ? 'Concluída'
-                                                      : 'Pendente',
-                                                  style: TextStyle(
-                                                    color:
-                                                        meta['concluida']
-                                                            ? Colors.green
-                                                            : Colors.orange,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                              ),
-                                              DataCell(
-                                                Row(
-                                                  children: [
-                                                    if (!meta['concluida'])
-                                                      IconButton(
-                                                        icon: const Icon(
-                                                          Icons
-                                                              .check_circle_outline,
-                                                          color: Colors.blue,
-                                                        ),
-                                                        onPressed:
-                                                            () => concluirMeta(
-                                                              meta['id'],
-                                                            ),
-                                                      ),
-                                                    IconButton(
-                                                      icon: const Icon(
-                                                        Icons.edit,
-                                                        color: Colors.amber,
-                                                      ),
-                                                      onPressed:
-                                                          () => abrirDialogMeta(
-                                                            meta: meta,
-                                                          ),
-                                                    ),
-                                                    IconButton(
-                                                      icon: const Icon(
-                                                        Icons.delete,
-                                                        color: Colors.red,
-                                                      ),
-                                                      onPressed:
-                                                          () => excluirMeta(
-                                                            meta['id'],
-                                                          ),
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ],
-                                          );
-                                        }).toList(),
-                                  ),
+                          child: Column(
+                            children: [
+                              const Text(
+                                'Pomodoro de Estudo',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
+                              const SizedBox(height: 10),
+                              Text(
+                                formatarTempo(tempoRestante),
+                                style: const TextStyle(
+                                  fontSize: 36,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  ElevatedButton(
+                                    onPressed:
+                                        emExecucao ? null : iniciarPomodoro,
+                                    child: const Text('Iniciar'),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  ElevatedButton(
+                                    onPressed:
+                                        emExecucao ? pararPomodoro : null,
+                                    child: const Text('Parar'),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  OutlinedButton(
+                                    onPressed: resetarPomodoro,
+                                    child: const Text('Resetar'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Minhas Metas de Hoje',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            ElevatedButton.icon(
+                              onPressed: () => {},
+                              icon: const Icon(Icons.add),
+                              label: const Text('Nova Meta'),
+                            ),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            ChoiceChip(
+                              label: const Text('Pendentes'),
+                              selected: !exibirConcluidas,
+                              onSelected:
+                                  (_) =>
+                                      setState(() => exibirConcluidas = false),
+                            ),
+                            const SizedBox(width: 10),
+                            ChoiceChip(
+                              label: const Text('Concluídas'),
+                              selected: exibirConcluidas,
+                              onSelected:
+                                  (_) =>
+                                      setState(() => exibirConcluidas = true),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        metasFiltradas.isEmpty
+                            ? const Center(
+                              child: Text('Nenhuma meta encontrada.'),
+                            )
+                            : Container(
+                              decoration: BoxDecoration(
+                                color: isDark ? Colors.grey[900] : Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.grey.shade300,
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: DataTable(
+                                  columns: const [
+                                    DataColumn(label: Text('Título')),
+                                    DataColumn(label: Text('Status')),
+                                    DataColumn(label: Text('Ações')),
+                                  ],
+                                  rows:
+                                      metasFiltradas.map<DataRow>((meta) {
+                                        return DataRow(
+                                          cells: [
+                                            DataCell(
+                                              Text(meta['titulo'] ?? ''),
+                                            ),
+                                            DataCell(
+                                              Text(
+                                                meta['concluida']
+                                                    ? 'Concluída'
+                                                    : 'Pendente',
+                                                style: TextStyle(
+                                                  color:
+                                                      meta['concluida']
+                                                          ? Colors.green
+                                                          : Colors.orange,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                            DataCell(
+                                              Row(
+                                                children: [
+                                                  if (!meta['concluida'])
+                                                    IconButton(
+                                                      icon: const Icon(
+                                                        Icons
+                                                            .check_circle_outline,
+                                                        color: Colors.blue,
+                                                      ),
+                                                      onPressed: () {},
+                                                    ),
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                      Icons.edit,
+                                                      color: Colors.amber,
+                                                    ),
+                                                    onPressed: () {},
+                                                  ),
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                      Icons.delete,
+                                                      color: Colors.red,
+                                                    ),
+                                                    onPressed: () {},
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        );
+                                      }).toList(),
+                                ),
+                              ),
+                            ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
       ),
     );

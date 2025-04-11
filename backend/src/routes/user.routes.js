@@ -19,6 +19,9 @@ router.get('/alunos/vencimentos-proximos', auth, permitirRoles('ADMIN', 'RECEPCI
 //Atualizar Vencimento
 router.patch('/:id/vencimento', auth, permitirRoles('ADMIN', 'RECEPCIONISTA'), userController.atualizarVencimento);
 
+//Excluir Usuario
+router.delete('/:id', auth, permitirRoles('ADMIN', 'RECEPCIONISTA'), userController.deletarUsuario);
+
 
 router.get('/protegido', auth, (req, res) => {
     res.json({ message: `Rota protegida acessada por: ${req.usuario.nome}` });

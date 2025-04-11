@@ -4,7 +4,7 @@ const bcrypt = require('bcrypt');
 const prisma = new PrismaClient();
 const DEFAULT_PASSWORD = '123456';
 
-exports.createUser = async ({ nome, email }) => {
+exports.createUser = async ({ nome, email, vencimento }) => {
   const userExists = await prisma.usuario.findUnique({ where: { email } });
   if (userExists) {
     throw new Error('Email já cadastrado.');
@@ -17,7 +17,8 @@ exports.createUser = async ({ nome, email }) => {
       nome,
       email,
       senha: hashedPassword,
-      role: 'ALUNO'
+      role: 'ALUNO',
+      vencimento: vencimento || null,
     },
   });
 
@@ -64,3 +65,8 @@ exports.listarAlunosComVencimentoProximo = async () => {
   });
 };
 
+exports.excluirUsuario = async (id) => {
+  await prisma.usuario.delete({
+    where: { id },
+  });
+};
