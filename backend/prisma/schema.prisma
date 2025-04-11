@@ -1,0 +1,49 @@
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  RECEPCIONISTA
+  ALUNO
+}
+
+enum StatusCabine {
+  LIVRE
+  OCUPADA
+}
+
+model Usuario {
+  id         Int      @id @default(autoincrement())
+  nome       String
+  email      String   @unique
+  senha      String
+  role       Role     @default(ALUNO)
+  vencimento DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  metas      Meta[]   @relation("UsuarioToMeta") // ✅ nome da relação
+}
+
+model Cabine {
+  id        Int          @id @default(autoincrement())
+  nome      String
+  status    StatusCabine @default(LIVRE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+}
+
+model Meta {
+  id        Int      @id @default(autoincrement())
+  titulo    String
+  concluida Boolean  @default(false)
+  data      DateTime
+  alunoId   Int
+  aluno     Usuario  @relation("UsuarioToMeta", fields: [alunoId], references: [id]) // ✅ relação nomeada
+}
