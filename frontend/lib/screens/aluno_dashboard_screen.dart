@@ -16,8 +16,11 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
   bool carregando = true;
   String? erro;
   String? vencimento;
+  bool exibirConcluidas = false;
+  String? token;
 
   final tituloController = TextEditingController();
+  int? metaEditandoId;
 
   // Pomodoro
   int tempoRestante = 25 * 60;
@@ -65,7 +68,17 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token');
+      token = prefs.getString('token');
+
+      final usuarioDecoded = parseJwt(token!);
+      final venc = usuarioDecoded['vencimento'];
+      if (venc != null) {
+        final data = DateTime.tryParse(venc);
+        if (data != null) {
+          vencimento =
+              '${data.day.toString().padLeft(2, '0')}/${data.month.toString().padLeft(2, '0')}/${data.year}';
+        }
+      }
 
       final response = await http.get(
         Uri.parse('http://localhost:3001/metas'),
@@ -75,26 +88,10 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
         },
       );
 
-      final userInfo = await http.get(
-        Uri.parse('http://localhost:3001/usuarios/alunos'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-
       if (response.statusCode == 200) {
         setState(() {
           metas = jsonDecode(response.body);
         });
-      }
-
-      if (userInfo.statusCode == 200) {
-        final usuarioLogado = jsonDecode(
-          userInfo.body,
-        ).firstWhere((e) => e['role'] == 'ALUNO');
-        final data = DateTime.tryParse(usuarioLogado['vencimento'] ?? '');
-        if (data != null) {
-          vencimento =
-              '${data.day.toString().padLeft(2, '0')}/${data.month.toString().padLeft(2, '0')}/${data.year}';
-        }
       }
     } catch (e) {
       setState(() => erro = 'Erro de conexão.');
@@ -103,11 +100,16 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
     }
   }
 
+  Map<String, dynamic> parseJwt(String token) {
+    final parts = token.split('.');
+    if (parts.length != 3) return {};
+    final payload = base64Url.normalize(parts[1]);
+    final decoded = utf8.decode(base64Url.decode(payload));
+    return jsonDecode(decoded);
+  }
+
   Future<void> concluirMeta(int id) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token');
-
       await http.patch(
         Uri.parse('http://localhost:3001/metas/$id/concluir'),
         headers: {
@@ -121,44 +123,78 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
     }
   }
 
-  Future<void> criarMeta() async {
+  Future<void> excluirMeta(int id) async {
+    try {
+      await http.delete(
+        Uri.parse('http://localhost:3001/metas/$id'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      await carregarMetas();
+    } catch (_) {
+      setState(() => erro = 'Erro ao excluir meta.');
+    }
+  }
+
+  Future<void> salvarMeta() async {
     final titulo = tituloController.text.trim();
     if (titulo.isEmpty) return;
 
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token');
+    final url =
+        metaEditandoId != null
+            ? 'http://localhost:3001/metas/$metaEditandoId'
+            : 'http://localhost:3001/metas';
+    final method = metaEditandoId != null ? 'PATCH' : 'POST';
 
     try {
-      final response = await http.post(
-        Uri.parse('http://localhost:3001/metas'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'titulo': titulo,
-          'data': DateTime.now().toIso8601String().split('T')[0],
-        }),
-      );
+      final response =
+          await (method == 'POST'
+              ? http.post(
+                Uri.parse(url),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer $token',
+                },
+                body: jsonEncode({
+                  'titulo': titulo,
+                  'data': DateTime.now().toIso8601String().split('T')[0],
+                }),
+              )
+              : http.patch(
+                Uri.parse(url),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer $token',
+                },
+                body: jsonEncode({'titulo': titulo}),
+              ));
 
-      if (response.statusCode == 201) {
+      if (response.statusCode == 200 || response.statusCode == 201) {
         tituloController.clear();
+        metaEditandoId = null;
         Navigator.of(context).pop();
         carregarMetas();
       } else {
-        setState(() => erro = 'Erro ao criar meta.');
+        setState(() => erro = 'Erro ao salvar meta.');
       }
     } catch (e) {
       setState(() => erro = 'Erro de conexão.');
     }
   }
 
-  void abrirDialogNovaMeta() {
+  void abrirDialogMeta({Map? meta}) {
+    if (meta != null) {
+      metaEditandoId = meta['id'];
+      tituloController.text = meta['titulo'];
+    } else {
+      metaEditandoId = null;
+      tituloController.clear();
+    }
+
     showDialog(
       context: context,
       builder:
           (context) => AlertDialog(
-            title: const Text('Nova Meta'),
+            title: Text(metaEditandoId != null ? 'Editar Meta' : 'Nova Meta'),
             content: TextField(
               controller: tituloController,
               decoration: const InputDecoration(labelText: 'Título da Meta'),
@@ -168,10 +204,19 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Cancelar'),
               ),
-              ElevatedButton(onPressed: criarMeta, child: const Text('Salvar')),
+              ElevatedButton(
+                onPressed: salvarMeta,
+                child: const Text('Salvar'),
+              ),
             ],
           ),
     );
+  }
+
+  void logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('token');
+    if (context.mounted) Navigator.pushReplacementNamed(context, '/');
   }
 
   @override
@@ -182,15 +227,18 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final metasFiltradas =
+        metas.where((m) => m['concluida'] == exibirConcluidas).toList();
+
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
         title: const Text('Painel do Aluno'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.add_task_rounded),
-            tooltip: 'Nova Meta',
-            onPressed: abrirDialogNovaMeta,
+            icon: const Icon(Icons.logout),
+            onPressed: logout,
+            tooltip: 'Sair',
           ),
         ],
       ),
@@ -202,19 +250,19 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
                 : Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (vencimento != null) ...[
-                      Text(
-                        '🗓️ Seu vencimento: $vencimento',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
+                    if (vencimento != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Text(
+                          '🗓️ Vencimento: $vencimento',
+                          style: const TextStyle(fontSize: 16),
                         ),
                       ),
-                      const SizedBox(height: 16),
-                    ],
 
+                    // Pomodoro
                     Container(
-                      padding: const EdgeInsets.all(20),
+                      padding: const EdgeInsets.all(16),
+                      margin: const EdgeInsets.only(bottom: 24),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
@@ -227,7 +275,6 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
                         ],
                       ),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           const Text(
                             'Pomodoro de Estudo',
@@ -236,7 +283,7 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 8),
                           Text(
                             formatarTempo(tempoRestante),
                             style: const TextStyle(
@@ -244,7 +291,7 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
                               fontWeight: FontWeight.bold,
                             ),
                           ),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 10),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
@@ -252,12 +299,12 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
                                 onPressed: emExecucao ? null : iniciarPomodoro,
                                 child: const Text('Iniciar'),
                               ),
-                              const SizedBox(width: 10),
+                              const SizedBox(width: 8),
                               ElevatedButton(
                                 onPressed: emExecucao ? pararPomodoro : null,
                                 child: const Text('Parar'),
                               ),
-                              const SizedBox(width: 10),
+                              const SizedBox(width: 8),
                               OutlinedButton(
                                 onPressed: resetarPomodoro,
                                 child: const Text('Resetar'),
@@ -268,22 +315,49 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
                       ),
                     ),
 
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Minhas Metas de Hoje',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    // Metas
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Minhas Metas de Hoje',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: () => abrirDialogMeta(),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Nova Meta'),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 20),
-                    if (erro != null)
-                      Text(erro!, style: const TextStyle(color: Colors.red)),
+
+                    Row(
+                      children: [
+                        ChoiceChip(
+                          label: const Text('Pendentes'),
+                          selected: !exibirConcluidas,
+                          onSelected:
+                              (_) => setState(() => exibirConcluidas = false),
+                        ),
+                        const SizedBox(width: 10),
+                        ChoiceChip(
+                          label: const Text('Concluídas'),
+                          selected: exibirConcluidas,
+                          onSelected:
+                              (_) => setState(() => exibirConcluidas = true),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 12),
                     Expanded(
                       child:
-                          metas.isEmpty
+                          metasFiltradas.isEmpty
                               ? const Center(
-                                child: Text('Crie sua primeira Meta!'),
+                                child: Text('Nenhuma meta encontrada.'),
                               )
                               : Container(
                                 decoration: BoxDecoration(
@@ -305,7 +379,7 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
                                       DataColumn(label: Text('Ações')),
                                     ],
                                     rows:
-                                        metas.map<DataRow>((meta) {
+                                        metasFiltradas.map<DataRow>((meta) {
                                           return DataRow(
                                             cells: [
                                               DataCell(
@@ -326,22 +400,42 @@ class _AlunoDashboardScreenState extends State<AlunoDashboardScreen> {
                                                 ),
                                               ),
                                               DataCell(
-                                                meta['concluida']
-                                                    ? const Icon(
-                                                      Icons.check,
-                                                      color: Colors.grey,
-                                                    )
-                                                    : IconButton(
+                                                Row(
+                                                  children: [
+                                                    if (!meta['concluida'])
+                                                      IconButton(
+                                                        icon: const Icon(
+                                                          Icons
+                                                              .check_circle_outline,
+                                                          color: Colors.blue,
+                                                        ),
+                                                        onPressed:
+                                                            () => concluirMeta(
+                                                              meta['id'],
+                                                            ),
+                                                      ),
+                                                    IconButton(
                                                       icon: const Icon(
-                                                        Icons
-                                                            .check_circle_outline,
-                                                        color: Colors.blue,
+                                                        Icons.edit,
+                                                        color: Colors.amber,
                                                       ),
                                                       onPressed:
-                                                          () => concluirMeta(
+                                                          () => abrirDialogMeta(
+                                                            meta: meta,
+                                                          ),
+                                                    ),
+                                                    IconButton(
+                                                      icon: const Icon(
+                                                        Icons.delete,
+                                                        color: Colors.red,
+                                                      ),
+                                                      onPressed:
+                                                          () => excluirMeta(
                                                             meta['id'],
                                                           ),
                                                     ),
+                                                  ],
+                                                ),
                                               ),
                                             ],
                                           );
